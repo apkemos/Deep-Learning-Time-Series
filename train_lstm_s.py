@@ -26,11 +26,11 @@ eval_batch_size = 1
 input_size = 113
 seq_len = 180
 hidden_size = 256
-num_layers = 3
+num_layers = 2
 
-num_epochs = 0
+num_epochs = 100
 lr = 0.001
-lam_reg = 1e-3 
+lam_reg = 0
 clip = 1
 
 print_every = 50
@@ -38,14 +38,14 @@ append_every = 1
 epoch_apend = 1
 anneal_lr_every = 20
 USE_CUDA = True
-USE_CUDA_TEST = False
+USE_CUDA_TEST = True
 # Hardcoded number of sensor channels employed in the OPPORTUNITY challenge
 NB_SENSOR_CHANNELS = 113
 
 model_path = os.getcwd() + '/net.pt'
 
 epoch_break = 40
-num_directions = 2
+num_directions = 1
 
 
 
@@ -95,7 +95,7 @@ class RNN(nn.Module):
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.num_classes = num_classes
-        self.lstm = nn.GRU(lstm_input_size, hidden_size, num_layers, batch_first=False, bidirectional=True)
+        self.lstm = nn.GRU(lstm_input_size, hidden_size, num_layers, batch_first=False, bidirectional=False, dropout = 0.5)
         self.drop = nn.Dropout(0.5)
         self.fc = nn.Linear(hidden_size*num_directions, num_classes)
         self.init_weights()
@@ -107,7 +107,7 @@ class RNN(nn.Module):
         # Set initial states 
         out, hidden = self.lstm(x, hidden)
 
-        out = self.drop(out)
+    #    out = self.drop(out)
 
         decoder = self.fc( out.view( out.size(0) * out.size(1), out.size(2)) )
         decoder = decoder.view( out.size(0), out.size(1), num_classes )
@@ -260,6 +260,7 @@ def evaluate_test (net, x_data, y_data, hidden, criterion, metric):
     data_loss = loss.data[0] 
     return output_flat, data_loss, f1, f1_w, hidden
 
+
 time_per_epoch = 0
 seqs_per_batch = batch_len // seq_len
 
@@ -289,12 +290,12 @@ for epoch in range(1, num_epochs + 1):
         output, hidden = net( x_seq, hidden )
         output_flat = output.view(-1,num_classes)
         loss = criterion(output_flat, y_seq )
-#        print (loss.data)
+
         epoch_loss += loss.data[0]
         #loss = loss/bptt
         loss.backward()
         optimizer.step()
-
+#        sys.exit()
         pred = output_flat.data.max(1)[1]
         score = f1_score( y_seq.data.cpu().numpy(), pred.cpu().numpy()  , average='macro')
         
@@ -351,27 +352,26 @@ del y_train
 del x_val
 del y_val
 
-
+#net_loaded = net
 net_loaded = None
 if (better_model == True):
     net_loaded = RNN(input_size, hidden_size, num_layers, num_classes)
     net_loaded.load_state_dict(torch.load(model_path))
     if USE_CUDA_TEST == True:
         net_loaded.cuda()
-      #  net.cuda()
+
 
 print ('Evaluating on test data')
 test_bs = 1
 
 
 test_crit = nn.CrossEntropyLoss()
-#output_flat_test, test_loss, test_f1 , test_f1_w  = evaluate(net, x_test, y_test, test_crit, 'F1' )
+output_flat_test, test_loss, test_f1 , test_f1_w  = evaluate(net, x_test, y_test, test_crit, 'F1' )
 all_preds = []
 hidden_test = None
 time.sleep(5)
 for batch, i in enumerate(range(0, x_test.size(0), x_val_np.shape[0])):
     bsz = min(x_val_np.shape[0], x_test.size(0) - i)
-    print (batch)
     output_flat_test_, test_loss_, test_f1_ , test_f1_w_, hidden_test  = evaluate_test(net_loaded, x_test[i:i+bsz], y_test[i:i+bsz],hidden_test,
                                                                           test_crit, 'F1' )
     all_preds.append(output_flat_test_.cpu().numpy())
@@ -409,6 +409,7 @@ plt.savefig(os.path.join(os.getcwd()+'/plots', 'Loss.png'))
 plt.show()
 
 
+
     
 
     
@@ -422,9 +423,7 @@ def plot_labels(y_data, start_plot, end_plot):
     f, ax = plt.subplots(1)
     ax.set_ylim(ymin=0)
     ax.set_ylim(ymax=2)
- #   box = ax.get_position()
-    #ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
-    #ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+
     for i in range(num_classes):
         plt.plot(range(start_plot,end_plot), orig_signals[start_plot:end_plot,i], label= '[{:d}] - {}'.format(i, data_utils.activities[i]) )
     plt.legend(loc="upper left", bbox_to_anchor=[1, 1],
@@ -443,6 +442,14 @@ start_plot = 0
 
 #y_val_preds, _, _ , _ = evaluate(net_loaded, x_val, y_val, nn.CrossEntropyLoss(), 'F1')
 
+#==============================================================================
+# x_train_test = torch.from_numpy(x_train_np).view(-1, 1, 113).cuda() 
+# y_train_test = torch.from_numpy(y_train_np).cuda().long()
+# y_train_preds, train_loss,  train_f1, train_f1_w = evaluate(net, x_train_test, y_train_test, nn.CrossEntropyLoss(), 'F1')
+# 
+# plot_labels(y_train_np, start_plot, len(y_train_np))
+# plot_labels(y_train_preds, start_plot, len(y_train_preds))
+#==============================================================================
 
 #plot_labels(y_val_preds, start_plot, len(y_val_preds))
 #plot_labels(y_val_np, start_plot, len(y_val_np))
@@ -491,9 +498,9 @@ print('Train Last Loss {:.4f}'.format(train_losses[-1] ) )
 print('Validation Last Loss {:.4f}'.format(val_losses[-1] ) )
 print ('Best Train accuracy {0:1f} in epoch {1:1d}'.format(np.amax(train_acc_history), np.argmax(train_acc_history) + 1) )
 print ('Best Validation accuracy {0:3f} in epoch {1:1d}'.format(np.amax(val_acc_history), np.argmax(val_acc_history) + 1 ) )
-print('\nTest Loss {:.4f}'.format(test_loss ) )
+print('\nTest Loss {:.4f}'.format(test_loss_ ) )
 print('F1 Score : {:.3f}'.format(test_f1) )
 print('F1 Score best validation model : {:.3f}\n'.format(test_f1_) )
 
-print('F1 Score weighted : {:.3f}'.format( test_f1_w) )
+print('F1 Score weighted : {:.3f}'.format( test_f1_w_) )
 print('F1 Score weighted best validation model : {:.3f}'.format( test_f1_w_) )
